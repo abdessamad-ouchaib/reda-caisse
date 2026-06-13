@@ -90,6 +90,22 @@ body{
   padding:10px 14px;flex-shrink:0;
 }
 .zone-lbl{font-size:.56rem;letter-spacing:2.5px;text-transform:uppercase;color:var(--gold-d);margin-bottom:6px;}
+.scanner-status{
+  display:flex;align-items:center;gap:6px;margin-top:7px;
+  font-size:.62rem;color:var(--muted);letter-spacing:.5px;
+  transition:color .2s;
+}
+.scanner-status .dot{
+  width:7px;height:7px;border-radius:50%;background:var(--muted);
+  flex-shrink:0;transition:all .2s;
+}
+.scanner-status.usb .dot{background:var(--green);box-shadow:0 0 6px var(--green);}
+.scanner-status.usb{color:var(--green);}
+.scanner-status.cam .dot{background:var(--gold);box-shadow:0 0 6px var(--gold);}
+.scanner-status.cam{color:var(--gold);}
+.scanner-status.idle .dot{background:var(--blue);animation:pulseDot 1.8s ease-in-out infinite;}
+.scanner-status.idle{color:var(--blue);}
+@keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.35}}
 .scan-row{display:flex;gap:6px;align-items:center;}
 #barcodeField{
   flex:1;background:var(--black);border:1.5px solid var(--border);border-radius:var(--r);
@@ -478,12 +494,16 @@ body{
   <div class="caisse-left" id="caisseLeft" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
     <!-- SCAN ZONE -->
     <div class="scan-zone">
-      <div class="zone-lbl">Scanner ou saisir un code</div>
+      <div class="zone-lbl">Scanner — Caméra 📷 ou Douchette USB 🔌</div>
       <div class="scan-row">
-        <input type="text" id="barcodeField" placeholder="Code-barres..." autocomplete="off" inputmode="numeric">
+        <input type="text" id="barcodeField" placeholder="Scanner avec douchette ou saisir..." autocomplete="off" inputmode="numeric">
         <button class="btn-cam" id="btnCamCaisse" onclick="openFS()">📷</button>
         <button class="btn-kg" onclick="openKG()">⚖ /kg</button>
         <button class="btn-go" onclick="doScan()">OK ↵</button>
+      </div>
+      <div class="scanner-status" id="scannerStatus">
+        <span class="dot" id="scannerDot"></span>
+        <span id="scannerStatusTxt">Prêt — champ actif pour douchette USB</span>
       </div>
     </div>
 
@@ -808,13 +828,15 @@ function startFS(){
     lc=c;lt=now;
     const fl=document.getElementById('scFlash');fl.classList.add('show');setTimeout(()=>fl.classList.remove('show'),500);
     beep(true);closeFS();
+    setStatus('cam', '📷 Caméra — code détecté');
     document.getElementById('barcodeField').value=c;doScan();
   });
 }
 function stopFS(){if(!fsScan)return;try{Quagga.stop();}catch(e){}fsScan=false;}
 function doFsScan(){
   const c=document.getElementById('fsField').value.trim();if(!c)return;
-  beep(true);closeFS();document.getElementById('barcodeField').value=c;doScan();
+  beep(true);closeFS();setStatus('cam','📷 Code saisi via scanner plein écran');
+  document.getElementById('barcodeField').value=c;doScan();
 }
 document.getElementById('fsField').addEventListener('keydown',e=>{if(e.key==='Enter')doFsScan();});
 
@@ -841,8 +863,69 @@ function stopFCam(){
   document.getElementById('btnCamForm').textContent='📷';
 }
 
-// ── SCAN & RECEIPT ────────────────────────
-document.getElementById('barcodeField').addEventListener('keydown',e=>{if(e.key==='Enter')doScan();});
+// ── SCAN & RECEIPT — Camera + USB Scanner (HID) ──
+const barcodeEl = document.getElementById('barcodeField');
+const statusEl  = document.getElementById('scannerStatus');
+const statusTxt = document.getElementById('scannerStatusTxt');
+
+let lastKeyTime = 0;
+let scanBuffer = '';
+let statusTimer = null;
+
+function setStatus(mode, text){
+  statusEl.className = 'scanner-status ' + mode;
+  statusTxt.textContent = text;
+  clearTimeout(statusTimer);
+  if(mode !== 'idle'){
+    statusTimer = setTimeout(() => {
+      statusEl.className = 'scanner-status idle';
+      statusTxt.textContent = 'Prêt — champ actif pour douchette USB';
+    }, 2500);
+  }
+}
+
+// Keep the field focused so a USB/Bluetooth HID scanner can always type into it,
+// unless the user is interacting with another input/modal.
+function refocusBarcode(){
+  const active = document.activeElement;
+  const isOtherInput = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA') && active !== barcodeEl;
+  const modalOpen = document.querySelector('.modal-bg.open, #kgBg.open, #fsScanner.open');
+  const onCaisseTab = document.getElementById('caissePanel').classList.contains('active');
+  if(onCaisseTab && !isOtherInput && !modalOpen && document.activeElement !== barcodeEl){
+    barcodeEl.focus();
+  }
+}
+setInterval(refocusBarcode, 600);
+document.addEventListener('click', () => setTimeout(refocusBarcode, 50));
+
+// Detect ultra-fast keystrokes typical of a USB/Bluetooth scanner (HID).
+// Human typing is usually >60ms between keys; scanners are <20ms.
+barcodeEl.addEventListener('keydown', e => {
+  const now = Date.now();
+  const delta = now - lastKeyTime;
+  lastKeyTime = now;
+
+  if(e.key === 'Enter'){
+    if(barcodeEl.value.trim()){
+      // If the value arrived very fast (scanner), flag it
+      if(scanBuffer.length > 2) setStatus('usb', '🔌 Douchette détectée — code reçu');
+      doScan();
+    }
+    scanBuffer = '';
+    return;
+  }
+
+  if(delta < 25 && e.key.length === 1){
+    scanBuffer += e.key;
+  } else if(e.key.length === 1) {
+    scanBuffer = e.key;
+  }
+});
+
+barcodeEl.addEventListener('focus', () => {
+  if(statusEl.className.includes('idle') || statusEl.className === 'scanner-status')
+    setStatus('idle', 'Prêt — champ actif pour douchette USB');
+});
 
 function doScan(){
   const el=document.getElementById('barcodeField'),code=el.value.trim();el.value='';
@@ -852,15 +935,17 @@ function doScan(){
     const kg=products.find(x=>x.code===code&&x.type==='kg');
     if(kg)fb(`⚖ "${kg.name}" est vendu au kg — utiliser le bouton ⚖ /kg`,'warn');
     else{beep(false);fb(`✕ Code "${code}" — Produit introuvable`,'err');}
+    refocusBarcode();
     return;
   }
-  if(p.stock!==null&&p.stock!==undefined&&p.stock<=0){beep(false);fb(`✕ "${p.name}" — Stock épuisé`,'err');return;}
+  if(p.stock!==null&&p.stock!==undefined&&p.stock<=0){beep(false);fb(`✕ "${p.name}" — Stock épuisé`,'err');refocusBarcode();return;}
   beep(true);
   const ex=receipt.find(r=>r.code===code&&r.type!=='kg');
   if(ex)ex.qty++;
   else receipt.push({code:p.code,name:p.name,price:p.price,qty:1,type:'barcode',cat:p.cat||'Général'});
   fb(`✔ ${p.name} — ${fmt(p.price)}`,'ok');
-  renderReceipt();el.focus();
+  renderReceipt();
+  refocusBarcode();
 }
 
 function renderReceipt(){
