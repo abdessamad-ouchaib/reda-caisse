@@ -11,7 +11,7 @@ Fonctionne sur **téléphone, tablette et ordinateur** — installable comme une
 
 | Fonctionnalité | Description |
 |---|---|
-| 🏷 Scanner code-barres | Caméra plein écran avec cadre de visée et retour sonore |
+| 🏷 Scanner code-barres | Caméra plein écran **ou** douchette/scanner USB-HID (type NETUM) |
 | ⚖ Produits au poids | Pavé numérique dédié pour les produits vendus au kg |
 | 📦 Gestion du stock | Suivi par produit, alertes stock faible / épuisé |
 | ✏ CRUD Produits | Ajouter, modifier, supprimer les produits |
@@ -87,8 +87,18 @@ npx serve reda-caisse
 ## Utilisation
 
 ### Scanner un produit
-1. Taper le code-barres dans le champ ou appuyer sur 📷 pour ouvrir le scanner caméra
-2. Le produit est ajouté au ticket automatiquement avec retour sonore
+
+**Avec une douchette / scanner USB (ex: NETUM, type "pistolet")**
+1. Brancher le scanner en USB (il est reconnu comme un clavier — aucun pilote requis)
+2. Le champ de saisie reste toujours actif automatiquement
+3. Pointer le scanner sur le code-barres et appuyer sur la gâchette
+4. Le code est tapé puis validé automatiquement (Entrée) — le produit est ajouté au ticket avec un bip
+
+**Avec la caméra du téléphone/tablette/PC**
+1. Appuyer sur 📷 pour ouvrir le scanner plein écran
+2. Centrer le code-barres dans le cadre — détection automatique avec bip et flash vert
+
+> Les deux méthodes fonctionnent indifféremment, même alternées pendant la même session. Un indicateur sous le champ de saisie affiche le mode actif (🔌 douchette / 📷 caméra).
 
 ### Ajouter un produit au poids
 1. Appuyer sur **⚖ /kg**
