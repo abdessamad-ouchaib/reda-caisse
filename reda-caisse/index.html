@@ -318,8 +318,9 @@ body{
 .ff.full{grid-column:1/-1;}
 .scan-row2{display:flex;gap:5px;}
 .scan-row2 input{flex:1;}
-.btn-scan2{background:var(--card2);border:1px solid var(--border);border-radius:4px;color:var(--gold);font-size:.92rem;padding:5px 9px;cursor:pointer;}
+.btn-scan2{background:var(--card2);border:1px solid var(--border);border-radius:4px;color:var(--gold);font-size:.92rem;padding:5px 9px;cursor:pointer;flex-shrink:0;}
 .btn-scan2:hover{border-color:var(--gold);}
+.btn-scan2.active{border-color:var(--blue);background:rgba(85,153,224,.15);color:var(--blue);}
 #fCam{display:none;height:110px;background:#000;border-radius:6px;overflow:hidden;position:relative;}
 #fCam.open{display:block;}
 #fCam video{width:100%;height:100%;object-fit:cover;}
@@ -566,7 +567,12 @@ body{
         <label>Code-barres *</label>
         <div class="scan-row2">
           <input type="text" id="fCode" placeholder="Scanner ou saisir..." inputmode="numeric">
-          <button class="btn-scan2" onclick="toggleFCam()" id="btnCamForm">📷</button>
+          <button class="btn-scan2" onclick="toggleFUsb()" id="btnUsbForm" title="Mode douchette / scanner USB">🔌</button>
+          <button class="btn-scan2" onclick="toggleFCam()" id="btnCamForm" title="Scanner caméra">📷</button>
+        </div>
+        <div class="scanner-status" id="fScannerStatus">
+          <span class="dot"></span>
+          <span id="fScannerStatusTxt">Prêt</span>
         </div>
       </div>
       <div id="fCam"><div id="fCamReader"></div><div class="fcam-ov"><div class="fcam-frame"></div></div></div>
@@ -856,6 +862,7 @@ function startFCam(){
     const c=r.codeResult.code,now=Date.now();
     if(c===lc&&now-lt<2000)return;lc=c;lt=now;
     document.getElementById('fCode').value=c;beep(true);stopFCam();
+    setFStatus('cam','📷 Caméra — code détecté');
   });
 }
 function stopFCam(){
@@ -864,6 +871,59 @@ function stopFCam(){
   document.getElementById('fCam').classList.remove('open');
   document.getElementById('btnCamForm').textContent='📷';
 }
+
+// FORM USB SCANNER MODE
+const fCodeEl   = document.getElementById('fCode');
+const fStatusEl = document.getElementById('fScannerStatus');
+const fStatusTx = document.getElementById('fScannerStatusTxt');
+const btnUsbForm = document.getElementById('btnUsbForm');
+let fUsbMode = false, fLastKeyTime = 0, fScanBuffer = '';
+let fStatusTimer = null;
+
+function toggleFUsb(){
+  fUsbMode = !fUsbMode;
+  btnUsbForm.classList.toggle('active', fUsbMode);
+  if(fUsbMode){
+    setFStatus('idle','🔌 Mode douchette activé — pointez et scannez');
+    fCodeEl.focus();
+  } else {
+    setFStatus('','Prêt');
+  }
+}
+function setFStatus(mode,text){
+  fStatusEl.className='scanner-status'+(mode?' '+mode:'');
+  fStatusTx.textContent=text;
+  clearTimeout(fStatusTimer);
+  if(mode==='usb'||mode==='cam'){
+    fStatusTimer=setTimeout(()=>{
+      if(fUsbMode) setFStatus('idle','🔌 Mode douchette activé — pointez et scannez');
+      else setFStatus('','Prêt');
+    },2500);
+  }
+}
+function refocusFCode(){
+  if(!fUsbMode) return;
+  const formOpen = document.getElementById('prodForm').classList.contains('open');
+  const modalOpen = document.querySelector('.modal-bg.open, #kgBg.open, #fsScanner.open');
+  if(formOpen && !modalOpen && !fCamScan && document.activeElement !== fCodeEl){
+    fCodeEl.focus();
+  }
+}
+setInterval(refocusFCode, 500);
+document.addEventListener('click', () => setTimeout(refocusFCode, 50));
+
+fCodeEl.addEventListener('keydown', e => {
+  const now=Date.now(), delta=now-fLastKeyTime; fLastKeyTime=now;
+  if(e.key==='Enter'){
+    e.preventDefault();
+    if(fCodeEl.value.trim() && fScanBuffer.length>2) setFStatus('usb','🔌 Douchette — code reçu');
+    fScanBuffer='';
+    return;
+  }
+  if(delta<25 && e.key.length===1) fScanBuffer+=e.key;
+  else if(e.key.length===1) fScanBuffer=e.key;
+});
+
 
 // ── SCAN & RECEIPT — Camera + USB Scanner (HID) ──
 const barcodeEl = document.getElementById('barcodeField');
@@ -1061,7 +1121,11 @@ function onTypeChange(){
 }
 function toggleForm(ec=null){
   const f=document.getElementById('prodForm'),open=f.classList.contains('open');
-  if(open&&editCode===ec){f.classList.remove('open');editCode=null;stopFCam();return;}
+  if(open&&editCode===ec){
+    f.classList.remove('open');editCode=null;stopFCam();
+    if(fUsbMode){fUsbMode=false;btnUsbForm.classList.remove('active');setFStatus('','Prêt');}
+    return;
+  }
   editCode=ec;
   document.getElementById('fTitle').textContent=ec?'Modifier le produit':'Nouveau produit';
   document.getElementById('fErr').textContent='';
