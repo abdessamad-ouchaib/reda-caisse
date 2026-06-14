@@ -916,7 +916,10 @@ fCodeEl.addEventListener('keydown', e => {
   const now=Date.now(), delta=now-fLastKeyTime; fLastKeyTime=now;
   if(e.key==='Enter'){
     e.preventDefault();
-    if(fCodeEl.value.trim() && fScanBuffer.length>2) setFStatus('usb','🔌 Douchette — code reçu');
+    if(fCodeEl.value.trim() && fScanBuffer.length>2){
+      setFStatus('usb','🔌 Douchette — code reçu');
+      fCodeEl.value = azertyFix(fCodeEl.value);
+    }
     fScanBuffer='';
     return;
   }
@@ -930,6 +933,17 @@ const barcodeEl = document.getElementById('barcodeField');
 const statusEl  = document.getElementById('scannerStatus');
 const statusTxt = document.getElementById('scannerStatusTxt');
 const btnUsb    = document.getElementById('btnUsbScan');
+
+// Many USB scanners send raw US-keyboard scancodes for digits 0-9.
+// On a French AZERTY system, those scancodes produce symbols instead
+// (the digit row needs Shift on AZERTY). Map them back to digits.
+// AZERTY top row (unshifted): & é " ' ( - è _ ç à  →  1 2 3 4 5 6 7 8 9 0
+const AZERTY_FIX = {'&':'1','é':'2','"':'3',"'":'4','(':'5','-':'6','è':'7','_':'8','ç':'9','à':'0'};
+function azertyFix(str){
+  let out='';
+  for(const ch of str) out += (AZERTY_FIX[ch] !== undefined ? AZERTY_FIX[ch] : ch);
+  return out;
+}
 
 let usbMode = false;
 let lastKeyTime = 0;
@@ -981,7 +995,10 @@ barcodeEl.addEventListener('keydown', e => {
 
   if(e.key === 'Enter'){
     if(barcodeEl.value.trim()){
-      if(scanBuffer.length > 2) setStatus('usb', '🔌 Douchette — code reçu');
+      if(scanBuffer.length > 2){
+        setStatus('usb', '🔌 Douchette — code reçu');
+        barcodeEl.value = azertyFix(barcodeEl.value);
+      }
       doScan();
     }
     scanBuffer = '';
@@ -1339,6 +1356,48 @@ function exportCSV(){
   a.href=url;a.download=`ventes_REDA_${new Date().toISOString().slice(0,10)}.csv`;
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
 }
+
+// ── GLOBAL SCANNER CAPTURE (fallback) ────────
+// A USB/Bluetooth scanner acts as a keyboard. If focus is ever NOT on a
+// text field (barcodeField, fCode, etc.), this listener still catches the
+// fast keystroke sequence and routes it to the right field automatically.
+// Works whether the scanner sends "Enter" at the end or not.
+(function(){
+  let gBuf = '', gLast = 0, gTimer = null;
+
+  function routeScan(code){
+    code = azertyFix(code.trim());
+    if(!code) return;
+    const onCaisse = document.getElementById('caissePanel').classList.contains('active');
+    const formOpen = document.getElementById('prodForm').classList.contains('open');
+    if(onCaisse){
+      document.getElementById('barcodeField').value = code;
+      setStatus('usb','🔌 Douchette — code reçu');
+      doScan();
+    } else if(formOpen && document.getElementById('fCodeRow').style.display !== 'none'){
+      document.getElementById('fCode').value = code;
+      setFStatus('usb','🔌 Douchette — code reçu');
+    }
+  }
+
+  document.addEventListener('keydown', function(e){
+    const a = document.activeElement;
+    const isField = a && (a.tagName==='INPUT' || a.tagName==='SELECT' || a.tagName==='TEXTAREA');
+    if(isField) return; // normal per-field listeners already handle this
+
+    const now = Date.now(), delta = now - gLast; gLast = now;
+
+    if(e.key === 'Enter' || e.key === 'Tab'){
+      if(gBuf.length >= 3){ e.preventDefault(); routeScan(gBuf); }
+      gBuf = ''; clearTimeout(gTimer); return;
+    }
+    if(e.key.length === 1){
+      gBuf = (delta > 100) ? e.key : gBuf + e.key;
+      clearTimeout(gTimer);
+      gTimer = setTimeout(() => { if(gBuf.length >= 4) routeScan(gBuf); gBuf=''; }, 150);
+    }
+  }, true);
+})();
 
 // ── START ─────────────────────────────────
 init();
