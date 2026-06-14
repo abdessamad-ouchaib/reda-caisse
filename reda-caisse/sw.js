@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reda-caisse-v6';
+const CACHE_NAME = 'reda-caisse-v7';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', event => {
