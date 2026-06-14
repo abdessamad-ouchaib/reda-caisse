@@ -330,6 +330,9 @@ body{
 .fa{display:flex;gap:6px;}
 .btn-save{background:var(--gold);color:var(--black);border:none;border-radius:4px;padding:7px 14px;font-weight:700;font-size:.75rem;cursor:pointer;}
 .btn-cancel-f{background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:7px 11px;font-size:.75rem;cursor:pointer;}
+.btn-del-f{background:rgba(224,85,85,.1);border:1px solid rgba(224,85,85,.35);color:var(--red);border-radius:4px;padding:7px 11px;font-size:.75rem;font-weight:700;cursor:pointer;margin-left:auto;}
+.btn-del-f:hover{background:var(--red);color:#fff;border-color:var(--red);}
+.fa{align-items:center;}
 #fErr{color:var(--red);font-size:.7rem;min-height:13px;}
 
 /* product cards */
@@ -585,6 +588,7 @@ body{
     <div class="fa">
       <button class="btn-save" onclick="saveProd()">💾 Enregistrer</button>
       <button class="btn-cancel-f" onclick="toggleForm()">Annuler</button>
+      <button class="btn-del-f" id="btnDelForm" onclick="deleteFromForm()" style="display:none">🗑 Supprimer</button>
     </div>
   </div>
 
@@ -877,6 +881,7 @@ const fCodeEl   = document.getElementById('fCode');
 const fStatusEl = document.getElementById('fScannerStatus');
 const fStatusTx = document.getElementById('fScannerStatusTxt');
 const btnUsbForm = document.getElementById('btnUsbForm');
+liveAzertyFix(fCodeEl);
 let fUsbMode = false, fLastKeyTime = 0, fScanBuffer = '';
 let fStatusTimer = null;
 
@@ -944,6 +949,20 @@ function azertyFix(str){
   for(const ch of str) out += (AZERTY_FIX[ch] !== undefined ? AZERTY_FIX[ch] : ch);
   return out;
 }
+// Live auto-correction: as characters are typed/scanned into the field,
+// any AZERTY-symbol that should be a digit is fixed immediately —
+// the field behaves like Notepad but shows the correct digits in real time.
+function liveAzertyFix(el){
+  el.addEventListener('input', () => {
+    const fixed = azertyFix(el.value);
+    if(fixed !== el.value){
+      const pos = el.selectionStart;
+      el.value = fixed;
+      try{ el.setSelectionRange(pos, pos); }catch(e){}
+    }
+  });
+}
+liveAzertyFix(barcodeEl);
 
 let usbMode = false;
 let lastKeyTime = 0;
@@ -1146,6 +1165,7 @@ function toggleForm(ec=null){
   editCode=ec;
   document.getElementById('fTitle').textContent=ec?'Modifier le produit':'Nouveau produit';
   document.getElementById('fErr').textContent='';
+  document.getElementById('btnDelForm').style.display=ec?'':'none';
   if(ec){
     const p=products.find(x=>x.code===ec);if(!p)return;
     document.getElementById('fType').value=p.type;
@@ -1160,7 +1180,16 @@ function toggleForm(ec=null){
     ['fCode','fName','fPrice','fCat','fStock'].forEach(id=>document.getElementById(id).value='');
   }
   f.classList.add('open');
-  if(!ec)document.getElementById('fCode').focus();
+  setTimeout(()=>document.getElementById('fCode').focus(),50);
+}
+async function deleteFromForm(){
+  if(!editCode)return;
+  if(!confirm('Supprimer ce produit ?'))return;
+  await dbDel('products',editCode);
+  products=products.filter(p=>p.code!==editCode);
+  toggleForm(editCode); // closes the form (editCode matches → close branch)
+  renderProds();
+  fb('🗑 Produit supprimé','ok');
 }
 async function saveProd(){
   const isEdit=!!editCode;
