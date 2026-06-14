@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reda-caisse-v2';
+const CACHE_NAME = 'reda-caisse-v3';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', event => {
@@ -15,8 +15,27 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
+// Network-first for the app shell (HTML), so updates are picked up immediately.
+// Falls back to cache only when offline.
 self.addEventListener('fetch', event => {
+  const req = event.request;
+  const isHTML = req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html');
+
+  if (isHTML) {
+    event.respondWith(
+      fetch(req)
+        .then(res => {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then(c => c.put(req, copy));
+          return res;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // Cache-first for other static assets (icons, manifest, etc.)
   event.respondWith(
-    caches.match(event.request).then(cached => cached || fetch(event.request))
+    caches.match(req).then(cached => cached || fetch(req))
   );
 });
