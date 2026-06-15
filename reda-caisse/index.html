@@ -18,6 +18,8 @@
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap');
 
@@ -65,6 +67,9 @@ body{
 .kpi-pill .kv{font-family:var(--mono);font-size:.72rem;font-weight:700;color:var(--gold);}
 .kpi-pill .kl{font-size:.48rem;letter-spacing:1px;text-transform:uppercase;color:var(--muted);}
 .clock-box{font-family:var(--mono);font-size:.78rem;color:var(--gold);background:var(--card);border:1px solid var(--border);border-radius:5px;padding:3px 9px;}
+#syncBadge.sync-ok{color:var(--green);border-color:var(--green);}
+#syncBadge.sync-off{color:var(--red);border-color:var(--red);}
+#syncBadge.sync-pending{color:var(--gold);}
 
 /* hide KPIs on very small screens */
 @media(max-width:360px){.kpi-wrap{display:none;}}
@@ -482,6 +487,7 @@ body{
       <div class="kpi-pill"><span class="kv" id="hkT">0</span><span class="kl">Tickets</span></div>
     </div>
     <div class="clock-box" id="clock">--:--</div>
+    <div class="clock-box" id="syncBadge" onclick="cloudRefresh()" style="cursor:pointer" title="Cliquer pour resynchroniser">⏳</div>
   </div>
 </div>
 
@@ -731,6 +737,85 @@ const dbPut=(s,o)=>new Promise((res,rej)=>{const t=db.transaction(s,'readwrite')
 const dbDel=(s,k)=>new Promise((res,rej)=>{const t=db.transaction(s,'readwrite'),r=t.objectStore(s).delete(k);r.onsuccess=()=>res();r.onerror=()=>rej(r.error);});
 const dbAdd=(s,o)=>new Promise((res,rej)=>{const t=db.transaction(s,'readwrite'),r=t.objectStore(s).add(o);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
 
+// ── Cloud Sync (Firebase Firestore — plan gratuit Spark, sans expiration) ──
+// 👉 Remplacez les valeurs ci-dessous par celles de VOTRE projet Firebase
+//    (Console Firebase → ⚙ Paramètres du projet → Vos applications → SDK Web)
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDtCq3Agis_TgmVb9Mahv-DMy3joV7Hsu0",
+  authDomain: "reda-caisse.firebaseapp.com",
+  projectId: "reda-caisse",
+};
+const CLOUD_ON = !FIREBASE_CONFIG.apiKey.includes('METTRE_VOTRE');
+let dbCloud=null;
+if(CLOUD_ON){
+  firebase.initializeApp(FIREBASE_CONFIG);
+  dbCloud=firebase.firestore();
+  try{dbCloud.enablePersistence({synchronizeTabs:true});}catch(e){}
+}
+const ID_FIELD={products:'code',sales:'id'};
+
+function setSync(state){
+  // state: 'ok' | 'off' | 'pending' | 'local'
+  const el=document.getElementById('syncBadge');
+  if(!el)return;
+  el.classList.remove('sync-ok','sync-off','sync-pending');
+  if(state==='ok'){el.textContent='☁ Sync';el.classList.add('sync-ok');el.title='Synchronisé avec le cloud — cliquer pour rafraîchir';}
+  else if(state==='off'){el.textContent='⚠ Hors-ligne';el.classList.add('sync-off');el.title='Pas de connexion — données locales uniquement, cliquer pour réessayer';}
+  else if(state==='pending'){el.textContent='⏳ Sync...';el.classList.add('sync-pending');el.title='Synchronisation en cours...';}
+  else {el.textContent='💾 Local';el.title='Synchro cloud non configurée (voir FIREBASE_CONFIG dans le code) — données stockées sur cet appareil uniquement';}
+}
+
+async function cloudGetAll(table){
+  if(!dbCloud)return null;
+  try{
+    const snap=await dbCloud.collection(table).get();
+    return snap.docs.map(d=>d.data());
+  }catch(e){console.warn('cloud get',table,e);return null;}
+}
+async function cloudUpsert(table,obj){
+  if(!dbCloud)return false;
+  try{await dbCloud.collection(table).doc(String(obj[ID_FIELD[table]])).set(obj);return true;}
+  catch(e){console.warn('cloud upsert',table,e);return false;}
+}
+async function cloudInsert(table,obj){
+  return cloudUpsert(table,obj);
+}
+async function cloudDelete(table,col,val){
+  if(!dbCloud)return false;
+  try{await dbCloud.collection(table).doc(String(val)).delete();return true;}
+  catch(e){console.warn('cloud delete',table,e);return false;}
+}
+// Force une vérification serveur (le badge se met à jour via les écouteurs temps réel)
+async function cloudRefresh(){
+  if(!CLOUD_ON){setSync('local');return;}
+  setSync('pending');
+  try{
+    await dbCloud.collection('products').get({source:'server'});
+    await dbCloud.collection('sales').get({source:'server'});
+    setSync('ok');
+  }catch(e){console.warn('cloud refresh',e);setSync('off');}
+}
+// Écoute en temps réel les changements (cet appareil + tous les autres)
+function initRealtime(){
+  if(!dbCloud)return;
+  dbCloud.collection('products').onSnapshot({includeMetadataChanges:true},async snap=>{
+    products=snap.docs.map(d=>d.data());
+    for(const p of products)await dbPut('products',p);
+    renderProds();updKPIs();
+    setSync(snap.metadata.fromCache?'pending':'ok');
+  },err=>{console.warn('products listener',err);setSync('off');});
+  dbCloud.collection('sales').onSnapshot({includeMetadataChanges:true},async snap=>{
+    sales=snap.docs.map(d=>d.data());
+    for(const s of sales)await dbPut('sales',s);
+    saleNum=sales.length?Math.max(...sales.map(s=>s.num||1))+1:1;
+    updKPIs();
+    if(document.getElementById('statsPanel').classList.contains('active'))renderStats();
+    setSync(snap.metadata.fromCache?'pending':'ok');
+  },err=>{console.warn('sales listener',err);setSync('off');});
+  window.addEventListener('online',()=>setSync('ok'));
+  window.addEventListener('offline',()=>setSync('off'));
+}
+
 // ── State ─────────────────────────────────
 let products=[], sales=[], receipt=[], saleNum=1;
 let fsScan=false, fCamScan=false, editCode=null, kgW='0';
@@ -784,12 +869,38 @@ const DEFAULTS=[
 
 async function init(){
   await openDB();
+  // 1) Chargement local immédiat (rapide, fonctionne hors-ligne)
   products=await dbAll('products');
-  if(!products.length){for(const p of DEFAULTS)await dbPut('products',p);products=DEFAULTS.slice();}
   sales=await dbAll('sales');
-  saleNum=sales.length?Math.max(...sales.map(s=>s.num||1))+1:1;
   renderReceipt();renderProds();updKPIs();
   document.getElementById('barcodeField').focus();
+
+  // 2) Chargement cloud (source partagée entre tous les appareils)
+  if(CLOUD_ON){
+    setSync('pending');
+    const cp=await cloudGetAll('products');
+    const cs=await cloudGetAll('sales');
+    if(cp!==null&&cs!==null){
+      products=cp;sales=cs;
+      for(const p of products)await dbPut('products',p);
+      for(const s of sales)await dbPut('sales',s);
+      renderProds();renderReceipt();updKPIs();
+      setSync('ok');
+    } else setSync('off');
+  } else setSync('local');
+
+  // 3) Première utilisation : aucun produit nulle part → on crée les produits de démo
+  if(!products.length){
+    for(const p of DEFAULTS){
+      await dbPut('products',p);
+      if(CLOUD_ON)await cloudUpsert('products',p);
+    }
+    products=DEFAULTS.slice();
+    renderProds();
+  }
+  saleNum=sales.length?Math.max(...sales.map(s=>s.num||1))+1:1;
+
+  if(CLOUD_ON)initRealtime();
 }
 
 // ── TABS ──────────────────────────────────
@@ -1186,6 +1297,7 @@ async function deleteFromForm(){
   if(!editCode)return;
   if(!confirm('Supprimer ce produit ?'))return;
   await dbDel('products',editCode);
+  if(CLOUD_ON)await cloudDelete('products','code',editCode);
   products=products.filter(p=>p.code!==editCode);
   toggleForm(editCode); // closes the form (editCode matches → close branch)
   renderProds();
@@ -1209,12 +1321,15 @@ async function saveProd(){
   if(isEdit){const idx=products.findIndex(x=>x.code===editCode);if(idx>-1)products[idx]=prod;}
   else products.push(prod);
   await dbPut('products',prod);
+  if(CLOUD_ON)await cloudUpsert('products',prod);
   beep(true);toggleForm(null);renderProds();
 }
 async function delProd(code){
   if(!confirm('Supprimer ce produit ?'))return;
   products=products.filter(p=>p.code!==code);
-  await dbDel('products',code);renderProds();
+  await dbDel('products',code);
+  if(CLOUD_ON)await cloudDelete('products','code',code);
+  renderProds();
 }
 function renderProds(){
   const q=document.getElementById('prodSearch').value.toLowerCase();
@@ -1269,14 +1384,21 @@ function buildPreview(){
 
 async function newSale(){
   const grand=getGrand(),now=new Date();
-  const sale={num:saleNum,date:now.toISOString(),dateStr:now.toLocaleDateString('fr-DZ')+' '+now.toLocaleTimeString('fr-FR'),items:receipt.map(i=>({...i})),total:grand};
+  const saleId=(crypto.randomUUID?crypto.randomUUID():'s_'+Date.now()+'_'+Math.random().toString(36).slice(2));
+  const sale={id:saleId,num:saleNum,date:now.toISOString(),dateStr:now.toLocaleDateString('fr-DZ')+' '+now.toLocaleTimeString('fr-FR'),items:receipt.map(i=>({...i})),total:grand};
   for(const it of receipt){
     if(it.type!=='kg'){
       const pr=products.find(p=>p.code===it.code);
-      if(pr&&pr.stock!=null){pr.stock=Math.max(0,pr.stock-it.qty);await dbPut('products',pr);}
+      if(pr&&pr.stock!=null){
+        pr.stock=Math.max(0,pr.stock-it.qty);
+        await dbPut('products',pr);
+        if(CLOUD_ON)await cloudUpsert('products',pr);
+      }
     }
   }
-  await dbAdd('sales',sale);sales=await dbAll('sales');saleNum++;
+  await dbAdd('sales',sale);
+  if(CLOUD_ON)await cloudInsert('sales',sale);
+  sales=await dbAll('sales');saleNum++;
   closePay();receipt=[];document.getElementById('discInp').value='';
   renderReceipt();updKPIs();fb('✔ Vente enregistrée — Nouveau ticket prêt','ok');
   document.getElementById('barcodeField').focus();
